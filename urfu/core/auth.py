@@ -5,10 +5,12 @@ from rest_framework.response import Response
 from rest_framework.authtoken.models import Token
 from django.contrib.auth import authenticate
 from .models import Student
+from .schemas import login_schema, accept_token_schema
 
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
+@login_schema
 def login_view(request):
     """
     Эндпоинт для входа по логину и паролю.
@@ -43,6 +45,7 @@ def login_view(request):
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
+@accept_token_schema
 def accept_token(request):
     """
     Эндпоинт для принятия токена по ID студента.

@@ -40,6 +40,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'rest_framework.authtoken',
+    'drf_spectacular',
     'grades',
     'core',
     'schedule',
@@ -152,5 +153,22 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
+    ],
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+}
+
+# drf-spectacular settings
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'URFU API',
+    'DESCRIPTION': 'API для системы управления расписанием и оценками студентов УрФУ',
+    'VERSION': '1.0.0',
+    'SERVE_INCLUDE_SCHEMA': False,
+    'COMPONENT_SPLIT_REQUEST': True,
+    'SCHEMA_PATH_PREFIX': '/api/',
+    'TAGS': [
+        {'name': 'Аутентификация', 'description': 'Эндпоинты для входа и получения токенов'},
+        {'name': 'Расписание', 'description': 'Эндпоинты для работы с расписанием занятий'},
+        {'name': 'Оценки', 'description': 'Эндпоинты для работы с оценками студентов'},
+        {'name': 'Справочники', 'description': 'Справочные данные (преподаватели, группы, предметы, студенты)'},
     ],
 }
