@@ -1,0 +1,39 @@
+services:
+  db:
+    image: postgres:15-alpine
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: urfu_db
+      POSTGRES_USER: urfu_user
+      POSTGRES_PASSWORD: urfu_password
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U urfu_user -d urfu_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build: .
+    command: >
+      sh -c "python manage.py migrate &&
+             python manage.py runserver 0.0.0.0:8000"
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    environment:
+      - DB_HOST=db
+      - DB_NAME=urfu_db
+      - DB_USER=urfu_user
+      - DB_PASSWORD=urfu_password
+      - DB_PORT=5432
+      - DEBUG=True
+      - ALLOWED_HOSTS=localhost,127.0.0.1,0.0.0.0
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+

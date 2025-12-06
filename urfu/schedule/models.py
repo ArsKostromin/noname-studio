@@ -37,9 +37,6 @@ class Schedule(models.Model):
     # Время окончания занятия
     ends_at = models.TimeField()
 
-    # Длительность занятия в минутах (опционально)
-    duration_minutes = models.IntegerField(null=True, blank=True)
-
     # Аудитория (номер, название)
     room = models.CharField(max_length=100, null=True, blank=True)
 

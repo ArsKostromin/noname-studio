@@ -2,19 +2,14 @@ from rest_framework.viewsets import ReadOnlyModelViewSet
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from .models import Grade, TestResult
-from .serializers import GradeSerializer, TestResultSerializer
+from .models import Grade
+from .serializers import GradeSerializer
 from core.serializers import SubjectSerializer
 
 
 class GradeViewSet(ReadOnlyModelViewSet):
-    queryset = Grade.objects.select_related("student", "subject")
+    queryset = Grade.objects.select_related("student", "subject", "teacher")
     serializer_class = GradeSerializer
-
-
-class TestResultViewSet(ReadOnlyModelViewSet):
-    queryset = TestResult.objects.select_related("student", "subject")
-    serializer_class = TestResultSerializer
 
 
 @api_view(['GET'])
@@ -27,7 +22,7 @@ def my_grades(request):
     student = request.user
     
     # Получаем все оценки студента
-    grades = Grade.objects.filter(student=student).select_related("subject")
+    grades = Grade.objects.filter(student=student).select_related("subject", "teacher")
     
     # Группируем по предметам и считаем средний балл
     from collections import defaultdict

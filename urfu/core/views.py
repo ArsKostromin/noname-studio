@@ -9,12 +9,12 @@ class TeacherViewSet(ReadOnlyModelViewSet):
 
 
 class GroupViewSet(ReadOnlyModelViewSet):
-    queryset = Group.objects.all()
+    queryset = Group.objects.select_related("subject")
     serializer_class = GroupSerializer
 
 
 class StudentViewSet(ReadOnlyModelViewSet):
-    queryset = Student.objects.select_related("group")
+    queryset = Student.objects.prefetch_related("groups")
     serializer_class = StudentSerializer
 
 

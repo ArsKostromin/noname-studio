@@ -30,10 +30,14 @@ def my_schedule(request):
     """
     Эндпоинт для получения расписания текущего пользователя.
     Возвращает расписание студента с темами, контрольными, тестами и т.д.
+    Студент может быть в нескольких группах (одна группа = один предмет).
     """
     student = request.user
+    # Получаем все группы студента
+    student_groups = student.groups.all()
+    # Фильтруем расписание по всем группам студента
     schedule_items = Schedule.objects.filter(
-        group=student.group
+        group__in=student_groups
     ).select_related("subject", "group", "teacher").order_by('weekday', 'starts_at')
     
     serializer = ScheduleSerializer(schedule_items, many=True)

@@ -8,23 +8,25 @@ class TeacherSerializer(serializers.ModelSerializer):
         fields = "__all__"
 
 
+class SubjectSerializer(serializers.ModelSerializer):
+    teacher = TeacherSerializer(read_only=True)
+
+    class Meta:
+        model = Subject
+        fields = "__all__"
+
+
 class GroupSerializer(serializers.ModelSerializer):
+    subject = SubjectSerializer(read_only=True)
+    
     class Meta:
         model = Group
         fields = "__all__"
 
 
 class StudentSerializer(serializers.ModelSerializer):
-    group = GroupSerializer(read_only=True)
+    groups = GroupSerializer(many=True, read_only=True)
 
     class Meta:
         model = Student
-        fields = "__all__"
-
-
-class SubjectSerializer(serializers.ModelSerializer):
-    teacher = TeacherSerializer(read_only=True)
-
-    class Meta:
-        model = Subject
         fields = "__all__"
