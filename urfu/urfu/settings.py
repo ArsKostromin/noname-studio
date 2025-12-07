@@ -164,6 +164,7 @@ SPECTACULAR_SETTINGS = {
     'VERSION': '1.0.0',
     'SERVE_INCLUDE_SCHEMA': False,
     'COMPONENT_SPLIT_REQUEST': True,
+    'COMPONENT_NO_READ_ONLY_REQUIRED': False,
     'SCHEMA_PATH_PREFIX': '/api/',
     'TAGS': [
         {'name': 'Аутентификация', 'description': 'Эндпоинты для входа и получения токенов'},

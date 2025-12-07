@@ -60,6 +60,7 @@ login_schema = extend_schema(
     2. Получите токен в ответе
     3. Используйте токен в заголовке Authorization: Token <ваш_токен>
     """,
+    methods=['POST'],
     request=LoginRequestSerializer,
     responses={
         200: LoginResponseSerializer,
@@ -67,6 +68,14 @@ login_schema = extend_schema(
         401: ErrorResponseSerializer,
     },
     examples=[
+        OpenApiExample(
+            'Пример запроса',
+            value={
+                'username': 'student123',
+                'password': 'password123'
+            },
+            request_only=True,
+        ),
         OpenApiExample(
             'Успешный вход',
             value={
@@ -112,6 +121,7 @@ accept_token_schema = extend_schema(
     2. Получите токен в ответе
     3. Используйте токен в заголовке Authorization: Token <ваш_токен>
     """,
+    methods=['POST'],
     request=AcceptTokenRequestSerializer,
     responses={
         200: LoginResponseSerializer,
@@ -119,6 +129,13 @@ accept_token_schema = extend_schema(
         404: ErrorResponseSerializer,
     },
     examples=[
+        OpenApiExample(
+            'Пример запроса',
+            value={
+                'id': '550e8400-e29b-41d4-a716-446655440000'
+            },
+            request_only=True,
+        ),
         OpenApiExample(
             'Успешное получение токена',
             value={
