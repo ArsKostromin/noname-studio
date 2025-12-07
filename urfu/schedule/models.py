@@ -1,3 +1,4 @@
+#urfu\schedule\models.py
 import uuid
 from django.db import models
 from core.models import Subject, Group, Teacher

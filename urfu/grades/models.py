@@ -1,3 +1,4 @@
+#urfu\grades\models.py
 import uuid
 from django.db import models
 from core.models import Student, Subject, Teacher
