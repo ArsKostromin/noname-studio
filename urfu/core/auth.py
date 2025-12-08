@@ -1,12 +1,30 @@
-#urfu\core\auth.py
+"""
+Эндпоинты авторизации с JWT access токенами и refresh токенами
+"""
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.authtoken.models import Token
 from django.contrib.auth import authenticate
+from rest_framework_simplejwt.tokens import RefreshToken as JWTRefreshToken
 from .models import Student
-from .schemas import login_schema, accept_token_schema
+from .refresh_token import (
+    create_refresh_token,
+    validate_refresh_token,
+    invalidate_refresh_token,
+    rotate_refresh_token
+)
+from .schemas import login_schema, refresh_schema, logout_schema
+
+
+def get_client_ip(request):
+    """Получает IP адрес клиента"""
+    x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+    if x_forwarded_for:
+        ip = x_forwarded_for.split(',')[0]
+    else:
+        ip = request.META.get('REMOTE_ADDR')
+    return ip
 
 
 @login_schema
@@ -15,7 +33,7 @@ from .schemas import login_schema, accept_token_schema
 def login_view(request):
     """
     Эндпоинт для входа по логину и паролю.
-    Возвращает токен для аутентификации.
+    Возвращает JWT access токен и refresh токен.
     """
     username = request.data.get('username')
     password = request.data.get('password')
@@ -34,46 +52,79 @@ def login_view(request):
             status=status.HTTP_401_UNAUTHORIZED
         )
 
-    token, created = Token.objects.get_or_create(user=user)
+    # Генерируем JWT access токен
+    jwt_refresh = JWTRefreshToken.for_user(user)
+    access_token = str(jwt_refresh.access_token)
+    
+    # Создаём refresh токен (opaque, хэшированный в БД)
+    user_agent = request.META.get('HTTP_USER_AGENT', '')
+    ip_address = get_client_ip(request)
+    refresh_token = create_refresh_token(user, user_agent, ip_address)
     
     return Response({
-        'token': token.key,
+        'access': access_token,
+        'refresh': refresh_token,
         'user_id': str(user.id),
         'username': user.username,
         'full_name': user.full_name
     })
 
 
-@accept_token_schema
+@refresh_schema
 @api_view(['POST'])
 @permission_classes([AllowAny])
-def accept_token(request):
+def refresh_view(request):
     """
-    Эндпоинт для принятия токена по ID студента.
-    Принимает id студента и возвращает токен.
+    Эндпоинт для обновления access токена.
+    Принимает refresh токен, возвращает новый access и новый refresh (ротация).
     """
-    student_id = request.data.get('id')
+    refresh_token = request.data.get('refresh')
     
-    if not student_id:
+    if not refresh_token:
         return Response(
-            {'error': 'Необходимо указать id студента'},
+            {'error': 'Необходимо указать refresh токен'},
             status=status.HTTP_400_BAD_REQUEST
         )
-
+    
     try:
-        student = Student.objects.get(id=student_id)
-    except Student.DoesNotExist:
+        # Ротируем refresh токен (проверяет, инвалидирует старый, создаёт новый)
+        user_agent = request.META.get('HTTP_USER_AGENT', '')
+        ip_address = get_client_ip(request)
+        new_refresh_token, user = rotate_refresh_token(refresh_token, user_agent, ip_address)
+        
+        # Генерируем новый JWT access токен
+        jwt_refresh = JWTRefreshToken.for_user(user)
+        new_access_token = str(jwt_refresh.access_token)
+        
+        return Response({
+            'access': new_access_token,
+            'refresh': new_refresh_token
+        })
+        
+    except Exception as e:
         return Response(
-            {'error': 'Студент с таким id не найден'},
-            status=status.HTTP_404_NOT_FOUND
+            {'error': 'Невалидный или истёкший refresh токен'},
+            status=status.HTTP_401_UNAUTHORIZED
         )
 
-    token, created = Token.objects.get_or_create(user=student)
+
+@logout_schema
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def logout_view(request):
+    """
+    Эндпоинт для выхода.
+    Инвалидирует refresh токен.
+    Access токен сам истечёт через короткое время.
+    """
+    refresh_token = request.data.get('refresh')
+    
+    if refresh_token:
+        try:
+            invalidate_refresh_token(refresh_token)
+        except Exception:
+            pass  # Токен уже невалиден или не существует
     
     return Response({
-        'token': token.key,
-        'user_id': str(student.id),
-        'username': student.username,
-        'full_name': student.full_name
-    })
-
+        'message': 'Успешный выход'
+    }, status=status.HTTP_200_OK)

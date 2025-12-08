@@ -77,3 +77,44 @@ class Student(AbstractBaseUser):
 
     def has_module_perms(self, app_label):
         return self.is_superuser
+
+
+class RefreshToken(models.Model):
+    """
+    Модель для хранения refresh токенов.
+    Токены хранятся в хэшированном виде для безопасности.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        Student,
+        on_delete=models.CASCADE,
+        related_name="refresh_tokens"
+    )
+    token_hash = models.CharField(max_length=64, unique=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    used_at = models.DateTimeField(null=True, blank=True)
+    user_agent = models.TextField(null=True, blank=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    
+    class Meta:
+        db_table = 'refresh_tokens'
+        indexes = [
+            models.Index(fields=['token_hash']),
+            models.Index(fields=['user', 'used_at']),
+        ]
+    
+    def mark_as_used(self):
+        """Помечает токен как использованный"""
+        self.used_at = timezone.now()
+        self.save(update_fields=['used_at'])
+    
+    def is_valid(self):
+        """Проверяет, валиден ли токен"""
+        return (
+            self.used_at is None and
+            self.expires_at > timezone.now()
+        )
+    
+    def __str__(self):
+        return f"RefreshToken for {self.user.username} (expires: {self.expires_at})"
