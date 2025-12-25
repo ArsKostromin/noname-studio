@@ -1,4 +1,6 @@
 from django.urls import path, include
+from django.contrib import admin
+
 from drf_spectacular.views import (
     SpectacularAPIView,
     SpectacularRedocView,
@@ -7,6 +9,7 @@ from drf_spectacular.views import (
 
 urlpatterns = [
     # API endpoints
+    path("admin/", admin.site.urls),
     path("api/core/", include("core.urls")),
     path("api/schedule/", include("schedule.urls")),
     path("api/grades/", include("grades.urls")),
