@@ -27,9 +27,6 @@ class Teacher(models.Model):
     def __str__(self):
         return self.full_name
 
-    class Meta:
-        verbose_name_plural = 'Преподователи'
-        verbose_name = 'Преподователь'
 
 class Subject(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -39,9 +36,6 @@ class Subject(models.Model):
     def __str__(self):
         return self.title
 
-    class Meta:
-        verbose_name_plural = 'Предметы'
-        verbose_name = 'Предмет'
 
 class Group(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -57,9 +51,6 @@ class Group(models.Model):
     def __str__(self):
         return f"{self.name} ({self.subject})"
 
-    class Meta:
-        verbose_name_plural = 'Группы'
-        verbose_name = 'Группа'
 
 class Student(AbstractBaseUser):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -87,9 +78,6 @@ class Student(AbstractBaseUser):
     def has_module_perms(self, app_label):
         return self.is_superuser
 
-    class Meta:
-        verbose_name_plural = 'Студенты'
-        verbose_name = 'Студент'
 
 class RefreshToken(models.Model):
     """
