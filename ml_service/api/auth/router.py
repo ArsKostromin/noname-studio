@@ -1,5 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, HTTPException
 
 from api.auth.schemas import (
     LoginRequest,
@@ -8,35 +7,23 @@ from api.auth.schemas import (
     RefreshResponse,
 )
 from api.auth.service import auth_login, auth_refresh
-from db.session import AsyncSessionLocal
 
 
 router = APIRouter(prefix="/api/core/auth", tags=["auth"])
 
 
-async def get_db():
-    async with AsyncSessionLocal() as session:
-        yield session
-
-
 @router.post("/login/", response_model=LoginResponse)
-async def login(
-    payload: LoginRequest,
-    db: AsyncSession = Depends(get_db),
-):
+async def login(payload: LoginRequest):
     try:
-        return await auth_login(payload.username, payload.password, db)
+        return await auth_login(payload.username, payload.password)
     except ValueError:
         raise HTTPException(status_code=401, detail="Неверный логин или пароль")
 
 
 @router.post("/refresh/", response_model=RefreshResponse)
-async def refresh(
-    payload: RefreshRequest,
-    db: AsyncSession = Depends(get_db),
-):
+async def refresh(payload: RefreshRequest):
     try:
-        return await auth_refresh(payload.refresh, db)
+        return await auth_refresh(payload.refresh)
     except ValueError:
         raise HTTPException(
             status_code=401,
