@@ -18,14 +18,14 @@ router = APIRouter()
 class PredictionRequest(BaseModel):
     """Запрос для предсказания"""
     features: List[float]
-    model_type: str = "logistic_regression"  # или "kmeans"
+    algo_type: str = "logistic_regression"  # или "kmeans"
 
 
 class PredictionResponse(BaseModel):
     """Ответ с предсказанием"""
     prediction: float
     probability: Optional[float] = None
-    model_type: str
+    algo_type: str
 
 
 class ClusterRequest(BaseModel):
@@ -50,7 +50,7 @@ async def predict(request: PredictionRequest):
     try:
         features = np.array(request.features).reshape(1, -1)
         
-        if request.model_type == "logistic_regression":
+        if request.algo_type == "logistic_regression":
             # Здесь можно загрузить сохранённую модель или обучить новую
             # Для примера создаём простую модель
             model = LogisticRegression()
@@ -68,7 +68,7 @@ async def predict(request: PredictionRequest):
             return PredictionResponse(
                 prediction=float(prediction),
                 probability=float(probability),
-                model_type="logistic_regression"
+                algo_type="logistic_regression"
             )
         else:
             raise HTTPException(status_code=400, detail="Unknown model type")
