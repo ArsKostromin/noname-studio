@@ -1,6 +1,6 @@
 import httpx
 from typing import List, Dict, Any
-from ml_service.config import settings
+from config import settings
 
 
 class CoreAPIClient:

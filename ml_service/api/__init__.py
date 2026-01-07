@@ -3,20 +3,20 @@ API роуты для ML сервиса
 """
 from fastapi import APIRouter
 
-# from .ml_routes import router as ml_router
 from .auth.router import router as auth_router
+from .ai.router import router as ml_router  
 
 router = APIRouter()
 
-# Auth роуты (логин / refresh)
+# Auth роуты
 router.include_router(
     auth_router,
     tags=["Auth"]
 )
 
-# # ML роуты
-# router.include_router(
-#     # ml_router,
-#     prefix="/ml",
-#     tags=["ML"]
-# )
+# AI / ML роуты
+router.include_router(
+    ml_router,
+    prefix="/ml",
+    tags=["ML"]
+)

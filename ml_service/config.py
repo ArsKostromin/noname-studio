@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     # ML
     # =========================
     MODEL_PATH: str = "models/"
+    HF_API_KEY: str 
 
     class Config:
         env_file = ".env"

@@ -2,12 +2,18 @@ from datetime import datetime, date
 from typing import Dict, List, Any
 from collections import defaultdict
 
+from services.core_api import CoreAPIClient
 
+
+# -------------------------------
+# Расписание → фичи
+# -------------------------------
 def extract_schedule_features(schedule: List[Dict[str, Any]]) -> Dict[str, Dict]:
     """
-    Возвращает по теме:
-    - days_until_test
-    - is_exam_soon
+    По каждой теме:
+    - is_test
+    - is_exam
+    - days_until_event
     """
     today = date.today()
     features = {}
@@ -33,6 +39,9 @@ def extract_schedule_features(schedule: List[Dict[str, Any]]) -> Dict[str, Dict]
     return features
 
 
+# -------------------------------
+# Оценки → фичи
+# -------------------------------
 def extract_grade_features(grades_payload: List[Dict[str, Any]]) -> Dict[str, Dict]:
     """
     Агрегируем оценки по темам
@@ -74,6 +83,40 @@ def extract_grade_features(grades_payload: List[Dict[str, Any]]) -> Dict[str, Di
             "avg_score": round(avg, 2),
             "fails": stats["fails"],
             "days_since_last_grade": days_since,
+        }
+
+    return result
+
+
+# -------------------------------
+# 🔥 ГЛАВНАЯ ФУНКЦИЯ
+# -------------------------------
+async def collect_student_features(access_token: str) -> Dict[str, Dict]:
+    """
+    Собирает ВСЕ фичи студента:
+    - оценки
+    - расписание
+    - объединяет по темам
+    """
+
+    client = CoreAPIClient(access_token)
+
+    # 1️⃣ Получаем данные
+    schedule = await client.get_my_schedule()
+    grades = await client.get_my_grades()
+
+    # 2️⃣ Извлекаем фичи
+    schedule_features = extract_schedule_features(schedule)
+    grade_features = extract_grade_features(grades)
+
+    # 3️⃣ Склеиваем по темам
+    all_topics = set(schedule_features) | set(grade_features)
+    result = {}
+
+    for topic in all_topics:
+        result[topic] = {
+            **grade_features.get(topic, {}),
+            **schedule_features.get(topic, {}),
         }
 
     return result
