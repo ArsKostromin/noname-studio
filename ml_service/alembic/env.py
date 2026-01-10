@@ -11,6 +11,7 @@ sys.path.insert(0, BASE_DIR)
 from db.base import Base
 from db.models.user import User
 from db.models.chat_message import ChatMessage
+from db.models.chat import Chat
 from config import settings
 
 config = context.config

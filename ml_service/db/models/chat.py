@@ -1,26 +1,19 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Text, DateTime, ForeignKey
+from sqlalchemy import String, DateTime, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 from db.base import Base
 
 
-class ChatMessage(Base):
-    __tablename__ = "chat_messages"
+class Chat(Base):
+    __tablename__ = "chats"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         primary_key=True,
         default=uuid.uuid4,
-    )
-
-    chat_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("chats.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
     )
 
     external_user_id: Mapped[uuid.UUID] = mapped_column(
@@ -29,8 +22,7 @@ class ChatMessage(Base):
         index=True,
     )
 
-    user_message: Mapped[str] = mapped_column(Text, nullable=False)
-    ai_response: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
     
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -39,5 +31,9 @@ class ChatMessage(Base):
         index=True,
     )
 
-    # Связь с чатом
-    chat: Mapped["Chat"] = relationship("Chat", back_populates="messages")
+    # Связь с сообщениями
+    messages: Mapped[list["ChatMessage"]] = relationship(
+        "ChatMessage",
+        back_populates="chat",
+        cascade="all, delete-orphan",
+    )

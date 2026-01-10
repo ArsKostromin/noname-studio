@@ -1,8 +1,7 @@
 # ml_service/api/ai/router.py
 import uuid
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel
 from jose import jwt, JWTError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -11,7 +10,19 @@ from services.features import collect_student_features
 from services.ml_model import predict_topic_needs
 from db.session import AsyncSessionLocal
 from db.models.chat_message import ChatMessage
+from db.models.chat import Chat
 from config import settings
+from api.ai.schemas import (
+    AIMessageRequest,
+    AIMessageResponse,
+    ChatHistoryItem,
+    ChatHistoryResponse,
+    CreateChatRequest,
+    CreateChatResponse,
+    ChatItem,
+    ChatsListResponse,
+    DeleteChatResponse,
+)
 
 router = APIRouter(prefix="/api/ai")
 hf_client = HFClient()
@@ -38,28 +49,6 @@ def get_user_id_from_token(access_token: str) -> uuid.UUID:
         return uuid.UUID(str(user_id))
     except (JWTError, ValueError, TypeError) as e:
         raise ValueError(f"Invalid token: {e}")
-
-
-# ======================
-# Pydantic модели
-# ======================
-class AIMessageRequest(BaseModel):
-    message: str
-
-
-class AIMessageResponse(BaseModel):
-    message: str
-
-
-class ChatHistoryItem(BaseModel):
-    id: str
-    user_message: str
-    ai_response: str
-    created_at: str
-
-
-class ChatHistoryResponse(BaseModel):
-    messages: list[ChatHistoryItem]
 
 
 # ======================
@@ -96,8 +85,107 @@ def build_student_context(features: dict, ml_results: dict) -> str:
 
 
 # ======================
-# Эндпоинт
+# Эндпоинты
 # ======================
+@router.post("/chats", response_model=CreateChatResponse)
+async def create_chat(
+    payload: CreateChatRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncSession = Depends(get_db),
+):
+    """Создать новый чат"""
+    access_token = credentials.credentials
+    
+    try:
+        external_user_id = get_user_id_from_token(access_token)
+    except ValueError:
+        raise HTTPException(status_code=401, detail="Неверный токен")
+    
+    # Создаем новый чат
+    chat = Chat(
+        external_user_id=external_user_id,
+        title=payload.title,
+    )
+    db.add(chat)
+    await db.commit()
+    await db.refresh(chat)
+    
+    return CreateChatResponse(
+        id=str(chat.id),
+        title=chat.title,
+        created_at=chat.created_at.isoformat(),
+    )
+
+
+@router.get("/chats", response_model=ChatsListResponse)
+async def get_chats(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncSession = Depends(get_db),
+):
+    """Получить список всех чатов пользователя"""
+    access_token = credentials.credentials
+    
+    try:
+        external_user_id = get_user_id_from_token(access_token)
+    except ValueError:
+        return ChatsListResponse(chats=[])
+    
+    # Получаем все чаты пользователя
+    result = await db.execute(
+        select(Chat)
+        .where(Chat.external_user_id == external_user_id)
+        .order_by(Chat.created_at.desc())
+    )
+    chats = result.scalars().all()
+    
+    # Преобразуем в формат ответа
+    chat_items = [
+        ChatItem(
+            id=str(chat.id),
+            title=chat.title,
+            created_at=chat.created_at.isoformat(),
+        )
+        for chat in chats
+    ]
+    
+    return ChatsListResponse(chats=chat_items)
+
+
+@router.delete("/chats/{chat_id}", response_model=DeleteChatResponse)
+async def delete_chat(
+    chat_id: str,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncSession = Depends(get_db),
+):
+    """Удалить чат по ID"""
+    access_token = credentials.credentials
+    
+    try:
+        external_user_id = get_user_id_from_token(access_token)
+        chat_uuid = uuid.UUID(chat_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Неверный формат chat_id")
+    
+    # Проверяем, что чат существует и принадлежит пользователю
+    chat_result = await db.execute(
+        select(Chat)
+        .where(Chat.id == chat_uuid)
+        .where(Chat.external_user_id == external_user_id)
+    )
+    chat = chat_result.scalar_one_or_none()
+    if not chat:
+        raise HTTPException(status_code=404, detail="Чат не найден")
+    
+    # Удаляем чат (сообщения удалятся автоматически благодаря CASCADE)
+    db.delete(chat)
+    await db.commit()
+    
+    return DeleteChatResponse(
+        message="Чат успешно удален",
+        deleted_chat_id=chat_id,
+    )
+
+
 @router.post("/message", response_model=AIMessageResponse)
 async def message(
     payload: AIMessageRequest,
@@ -109,9 +197,19 @@ async def message(
     # Получаем user_id из токена
     try:
         external_user_id = get_user_id_from_token(access_token)
+        chat_id = uuid.UUID(payload.chat_id)
     except ValueError as e:
-        # Если не удалось декодировать токен, продолжаем без сохранения в БД
-        external_user_id = None
+        raise HTTPException(status_code=400, detail=f"Неверный формат данных: {e}")
+    
+    # Проверяем, что чат существует и принадлежит пользователю
+    chat_result = await db.execute(
+        select(Chat)
+        .where(Chat.id == chat_id)
+        .where(Chat.external_user_id == external_user_id)
+    )
+    chat = chat_result.scalar_one_or_none()
+    if not chat:
+        raise HTTPException(status_code=404, detail="Чат не найден")
     
     features = await collect_student_features(access_token)
     ml_results = predict_topic_needs(features)
@@ -140,42 +238,54 @@ async def message(
     ai_response = await hf_client.ask(prompt)
 
     # Сохраняем сообщение в БД
-    if external_user_id:
-        try:
-            chat_message = ChatMessage(
-                external_user_id=external_user_id,
-                user_message=payload.message,
-                ai_response=ai_response,
-            )
-            db.add(chat_message)
-            await db.commit()
-        except Exception as e:
-            # Логируем ошибку, но не прерываем выполнение
-            print(f"Error saving chat message to DB: {e}")
-            await db.rollback()
+    try:
+        chat_message = ChatMessage(
+            chat_id=chat_id,
+            external_user_id=external_user_id,
+            user_message=payload.message,
+            ai_response=ai_response,
+        )
+        db.add(chat_message)
+        await db.commit()
+    except Exception as e:
+        # Логируем ошибку, но не прерываем выполнение
+        print(f"Error saving chat message to DB: {e}")
+        await db.rollback()
 
     return AIMessageResponse(message=ai_response)
 
 
 @router.get("/history", response_model=ChatHistoryResponse)
 async def get_chat_history(
+    chat_id: str = Query(..., description="UUID чата"),
     credentials: HTTPAuthorizationCredentials = Depends(security),
     limit: int = Query(50, ge=1, le=100, description="Maximum number of messages to return"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Получить историю чата для текущего пользователя"""
+    """Получить историю чата для указанного чата"""
     access_token = credentials.credentials
     
     try:
         external_user_id = get_user_id_from_token(access_token)
+        chat_uuid = uuid.UUID(chat_id)
     except ValueError:
         return ChatHistoryResponse(messages=[])
     
-    # Получаем последние сообщения пользователя
+    # Проверяем, что чат существует и принадлежит пользователю
+    chat_result = await db.execute(
+        select(Chat)
+        .where(Chat.id == chat_uuid)
+        .where(Chat.external_user_id == external_user_id)
+    )
+    chat = chat_result.scalar_one_or_none()
+    if not chat:
+        return ChatHistoryResponse(messages=[])
+    
+    # Получаем сообщения чата
     result = await db.execute(
         select(ChatMessage)
-        .where(ChatMessage.external_user_id == external_user_id)
-        .order_by(ChatMessage.created_at.desc())
+        .where(ChatMessage.chat_id == chat_uuid)
+        .order_by(ChatMessage.created_at.asc())  # Сортируем по возрастанию для хронологического порядка
         .limit(limit)
     )
     messages = result.scalars().all()
@@ -188,7 +298,7 @@ async def get_chat_history(
             ai_response=msg.ai_response,
             created_at=msg.created_at.isoformat(),
         )
-        for msg in reversed(messages)  # Возвращаем в хронологическом порядке
+        for msg in messages
     ]
     
     return ChatHistoryResponse(messages=history_items)
