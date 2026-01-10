@@ -13,7 +13,7 @@ from db.session import AsyncSessionLocal
 from db.models.chat_message import ChatMessage
 from config import settings
 
-router = APIRouter(prefix="/api/ai", tags=["ai"])
+router = APIRouter(prefix="/api/ai")
 hf_client = HFClient()
 security = HTTPBearer()  # "Authorization: Bearer <token>"
 

@@ -33,7 +33,7 @@ app.add_middleware(
 )
 
 # Подключаем роуты
-app.include_router(router, prefix="/api/v1")
+app.include_router(router, prefix="")
 
 
 @app.get("/")

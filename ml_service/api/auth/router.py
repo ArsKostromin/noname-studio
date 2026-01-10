@@ -9,7 +9,7 @@ from api.auth.schemas import (
 from api.auth.service import auth_login, auth_refresh
 
 
-router = APIRouter(prefix="/api/core/auth", tags=["auth"])
+router = APIRouter(prefix="/api/core/auth")
 
 
 @router.post("/login/", response_model=LoginResponse)
