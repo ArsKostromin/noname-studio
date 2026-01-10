@@ -10,8 +10,16 @@ sys.path.insert(0, BASE_DIR)
 
 from db.base import Base
 from db.models.user import User
+from db.models.chat_message import ChatMessage
+from config import settings
 
 config = context.config
+
+# Используем URL базы данных из настроек, если он не указан в alembic.ini
+if config.get_main_option("sqlalchemy.url") == "postgresql+asyncpg://user:password@db:5432/dbname":
+    # Заменяем на реальный URL из настроек (Alembic использует синхронный драйвер)
+    db_url = settings.DATABASE_URL.replace("+asyncpg", "+psycopg2")
+    config.set_main_option("sqlalchemy.url", db_url)
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     # =========================
     AUTH_SERVER_URL: str = "http://django:8000"
     JWT_PUBLIC_KEY: str = "PUBLIC_KEY_FROM_AUTH"
+    JWT_SECRET_KEY: str = "django-insecure-rh!+beoqrde_haod&xhod)jbjxx7jh$o2m!lhg(1h1kbxi!(my"  # Должен совпадать с SECRET_KEY Django
     JWT_ALGORITHM: str = "HS256"
 
     # =========================

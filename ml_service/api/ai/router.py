@@ -1,24 +1,65 @@
 # ml_service/api/ai/router.py
-from fastapi import APIRouter
+import uuid
+from fastapi import APIRouter, Depends, Query
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
+from jose import jwt, JWTError
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from services.hf_gpt import HFClient
 from services.features import collect_student_features
 from services.ml_model import predict_topic_needs
+from db.session import AsyncSessionLocal
+from db.models.chat_message import ChatMessage
+from config import settings
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
 hf_client = HFClient()
+security = HTTPBearer()  # "Authorization: Bearer <token>"
+
+
+async def get_db():
+    async with AsyncSessionLocal() as session:
+        yield session
+
+
+def get_user_id_from_token(access_token: str) -> uuid.UUID:
+    """Извлекает user_id из JWT токена"""
+    try:
+        payload = jwt.decode(
+            access_token,
+            settings.JWT_SECRET_KEY,
+            algorithms=[settings.JWT_ALGORITHM],
+        )
+        # В Django SimpleJWT используется 'user_id' в payload
+        user_id = payload.get("user_id") or payload.get("sub")
+        if user_id is None:
+            raise ValueError("User ID not found in token")
+        return uuid.UUID(str(user_id))
+    except (JWTError, ValueError, TypeError) as e:
+        raise ValueError(f"Invalid token: {e}")
 
 
 # ======================
 # Pydantic модели
 # ======================
 class AIMessageRequest(BaseModel):
-    access_token: str
     message: str
 
 
 class AIMessageResponse(BaseModel):
     message: str
+
+
+class ChatHistoryItem(BaseModel):
+    id: str
+    user_message: str
+    ai_response: str
+    created_at: str
+
+
+class ChatHistoryResponse(BaseModel):
+    messages: list[ChatHistoryItem]
 
 
 # ======================
@@ -58,8 +99,21 @@ def build_student_context(features: dict, ml_results: dict) -> str:
 # Эндпоинт
 # ======================
 @router.post("/message", response_model=AIMessageResponse)
-async def message(payload: AIMessageRequest):
-    features = await collect_student_features(payload.access_token)
+async def message(
+    payload: AIMessageRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncSession = Depends(get_db),
+):
+    access_token = credentials.credentials
+    
+    # Получаем user_id из токена
+    try:
+        external_user_id = get_user_id_from_token(access_token)
+    except ValueError as e:
+        # Если не удалось декодировать токен, продолжаем без сохранения в БД
+        external_user_id = None
+    
+    features = await collect_student_features(access_token)
     ml_results = predict_topic_needs(features)
     student_context = build_student_context(features, ml_results)
 
@@ -85,4 +139,56 @@ async def message(payload: AIMessageRequest):
     
     ai_response = await hf_client.ask(prompt)
 
+    # Сохраняем сообщение в БД
+    if external_user_id:
+        try:
+            chat_message = ChatMessage(
+                external_user_id=external_user_id,
+                user_message=payload.message,
+                ai_response=ai_response,
+            )
+            db.add(chat_message)
+            await db.commit()
+        except Exception as e:
+            # Логируем ошибку, но не прерываем выполнение
+            print(f"Error saving chat message to DB: {e}")
+            await db.rollback()
+
     return AIMessageResponse(message=ai_response)
+
+
+@router.get("/history", response_model=ChatHistoryResponse)
+async def get_chat_history(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    limit: int = Query(50, ge=1, le=100, description="Maximum number of messages to return"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Получить историю чата для текущего пользователя"""
+    access_token = credentials.credentials
+    
+    try:
+        external_user_id = get_user_id_from_token(access_token)
+    except ValueError:
+        return ChatHistoryResponse(messages=[])
+    
+    # Получаем последние сообщения пользователя
+    result = await db.execute(
+        select(ChatMessage)
+        .where(ChatMessage.external_user_id == external_user_id)
+        .order_by(ChatMessage.created_at.desc())
+        .limit(limit)
+    )
+    messages = result.scalars().all()
+    
+    # Преобразуем в формат ответа
+    history_items = [
+        ChatHistoryItem(
+            id=str(msg.id),
+            user_message=msg.user_message,
+            ai_response=msg.ai_response,
+            created_at=msg.created_at.isoformat(),
+        )
+        for msg in reversed(messages)  # Возвращаем в хронологическом порядке
+    ]
+    
+    return ChatHistoryResponse(messages=history_items)
