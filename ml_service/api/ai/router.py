@@ -1,6 +1,7 @@
 # ml_service/api/ai/router.py
 import uuid
 from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -186,7 +187,7 @@ async def delete_chat(
     )
 
 
-@router.post("/message", response_model=AIMessageResponse)
+@router.post("/message")
 async def message(
     payload: AIMessageRequest,
     credentials: HTTPAuthorizationCredentials = Depends(security),
@@ -235,24 +236,47 @@ async def message(
     print(f"User Msg: {payload.message}")
     print("="*50 + "\n")
     
-    ai_response = await hf_client.ask(prompt)
-
-    # Сохраняем сообщение в БД
-    try:
-        chat_message = ChatMessage(
-            chat_id=chat_id,
-            external_user_id=external_user_id,
-            user_message=payload.message,
-            ai_response=ai_response,
-        )
-        db.add(chat_message)
-        await db.commit()
-    except Exception as e:
-        # Логируем ошибку, но не прерываем выполнение
-        print(f"Error saving chat message to DB: {e}")
-        await db.rollback()
-
-    return AIMessageResponse(message=ai_response)
+    # Собираем полный ответ для сохранения в БД
+    full_response = ""
+    
+    async def stream_generator():
+        nonlocal full_response
+        try:
+            async for chunk in hf_client.ask_stream(prompt):
+                full_response += chunk
+                # Экранируем специальные символы для SSE
+                escaped_chunk = chunk.replace("\n", "\\n").replace("\r", "\\r")
+                yield f"data: {escaped_chunk}\n\n"
+            
+            if full_response:
+                try:
+                    chat_message = ChatMessage(
+                        chat_id=chat_id,
+                        external_user_id=external_user_id,
+                        user_message=payload.message,
+                        ai_response=full_response,
+                    )
+                    db.add(chat_message)
+                    await db.commit()
+                except Exception as e:
+                    print(f"Error saving chat message to DB: {e}")
+                    await db.rollback()
+            
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            print(f"Error in stream generator: {e}")
+            yield f"data: Произошла ошибка при получении ответа.\n\n"
+            yield "data: [DONE]\n\n"
+        
+    return StreamingResponse(
+        stream_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        }
+    )
 
 
 @router.get("/history", response_model=ChatHistoryResponse)

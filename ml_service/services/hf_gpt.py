@@ -1,8 +1,9 @@
 # ml_service/services/hf_gpt.py
 import httpx
 import re
-from config import settings
 import json
+from typing import AsyncGenerator
+from config import settings
 
 class HFClient:
     # Можно попробовать модель попроще, если GLM-4.7 будет тормозить (например, Qwen/Qwen2.5-72B-Instruct)
@@ -103,3 +104,86 @@ class HFClient:
         candidate = re.sub(r"^(совет|ответ|draft|output|result)[\s:]*", "", candidate, flags=re.IGNORECASE)
         
         return candidate.strip()
+
+    async def ask_stream(self, prompt: str) -> AsyncGenerator[str, None]:
+        """Стриминг ответа от HuggingFace с постепенной отдачей по предложениям"""
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": (
+                    "Ты — поддерживающий AI-репетитор. "
+                    "Давай короткий, полезный совет студенту на основе его данных. "
+                    "Один абзац на русском, сразу к делу."
+                )},
+                {"role": "user", "content": prompt},
+            ],
+            "max_tokens": 2048,
+            "temperature": 0.6,
+            "stream": True,
+        }
+
+        full_response = ""
+        buffer = ""
+
+        async with httpx.AsyncClient(timeout=120) as client:
+            try:
+                async with client.stream("POST", self.api_url, headers=self.headers, json=payload) as response:
+                    if response.status_code != 200:
+                        error_text = await response.aread()
+                        msg = f"HF ERROR {response.status_code}: {error_text.decode()}"
+                        print(msg)
+                        yield f"{msg}\n"
+                        yield "[DONE]\n"
+                        return
+
+                    async for line in response.aiter_lines():
+                        if not line or not line.strip():
+                            continue
+                        
+                        if line.startswith("data: "):
+                            data_str = line[6:].strip()
+                            if data_str == "[DONE]":
+                                break
+                            
+                            try:
+                                data_json = json.loads(data_str)
+                                choices = data_json.get("choices", [])
+                                if choices:
+                                    delta = choices[0].get("delta", {})
+                                    content = delta.get("content", "")
+                                    if content:
+                                        buffer += content
+                                        # разбиваем на предложения
+                                        while True:
+                                            # ищем точку/воскл/вопрос
+                                            match = re.search(r"([.!?]+)\s", buffer)
+                                            if not match:
+                                                break
+                                            end_idx = match.end()
+                                            chunk = buffer[:end_idx]
+                                            buffer = buffer[end_idx:]
+                                            full_response += chunk
+                                            yield chunk
+                            except json.JSONDecodeError as e:
+                                err_msg = f"Ошибка декодирования JSON: {e}"
+                                print(err_msg)
+                                yield f"{err_msg}\n"
+                        elif line.startswith(":"):
+                            continue
+
+            except Exception as e:
+                err_msg = f"Ошибка стриминга: {e}"
+                print(err_msg)
+                yield f"{err_msg}\n"
+
+        # остаток
+        if buffer:
+            full_response += buffer
+            yield buffer
+
+        yield "[DONE]\n"
+
+        print("\n" + "="*50)
+        print("🤖 [OUTPUT] HF STREAMED RESPONSE:")
+        print(full_response)
+        print("="*50 + "\n")
