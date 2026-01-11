@@ -259,19 +259,18 @@ async def message(
 async def get_chat_history(
     chat_id: str = Query(..., description="UUID чата"),
     credentials: HTTPAuthorizationCredentials = Depends(security),
-    limit: int = Query(50, ge=1, le=100, description="Maximum number of messages to return"),
+    limit: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
 ):
-    """Получить историю чата для указанного чата"""
     access_token = credentials.credentials
-    
+
     try:
         external_user_id = get_user_id_from_token(access_token)
         chat_uuid = uuid.UUID(chat_id)
     except ValueError:
         return ChatHistoryResponse(messages=[])
-    
-    # Проверяем, что чат существует и принадлежит пользователю
+
+    # проверяем чат
     chat_result = await db.execute(
         select(Chat)
         .where(Chat.id == chat_uuid)
@@ -280,25 +279,43 @@ async def get_chat_history(
     chat = chat_result.scalar_one_or_none()
     if not chat:
         return ChatHistoryResponse(messages=[])
-    
-    # Получаем сообщения чата
+
+    # тянем сообщения
     result = await db.execute(
         select(ChatMessage)
         .where(ChatMessage.chat_id == chat_uuid)
-        .order_by(ChatMessage.created_at.asc())  # Сортируем по возрастанию для хронологического порядка
+        .order_by(ChatMessage.created_at.asc())
         .limit(limit)
     )
-    messages = result.scalars().all()
-    
-    # Преобразуем в формат ответа
-    history_items = [
-        ChatHistoryItem(
-            id=str(msg.id),
-            user_message=msg.user_message,
-            ai_response=msg.ai_response,
-            created_at=msg.created_at.isoformat(),
-        )
-        for msg in messages
-    ]
-    
-    return ChatHistoryResponse(messages=history_items)
+    rows = result.scalars().all()
+
+    messages: list[ChatHistoryItem] = []
+
+    for msg in rows:
+        created = msg.created_at.isoformat()
+
+        # USER
+        if msg.user_message:
+            messages.append(
+                ChatHistoryItem(
+                    id=str(msg.id),
+                    chat_id=str(msg.chat_id),
+                    role="user",
+                    text=msg.user_message,
+                    created_at=created,
+                )
+            )
+
+        # ASSISTANT
+        if msg.ai_response:
+            messages.append(
+                ChatHistoryItem(
+                    id=str(msg.id),
+                    chat_id=str(msg.chat_id),
+                    role="assistant",
+                    text=msg.ai_response,
+                    created_at=created,
+                )
+            )
+
+    return ChatHistoryResponse(messages=messages)

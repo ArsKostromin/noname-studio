@@ -1,4 +1,5 @@
 from pydantic import BaseModel
+from typing import List, Literal
 
 
 # ======================
@@ -18,13 +19,14 @@ class AIMessageResponse(BaseModel):
 # ======================
 class ChatHistoryItem(BaseModel):
     id: str
-    user_message: str
-    ai_response: str
+    chat_id: str
+    role: Literal["user", "assistant"]
+    text: str
     created_at: str
 
 
 class ChatHistoryResponse(BaseModel):
-    messages: list[ChatHistoryItem]
+    messages: List[ChatHistoryItem]
 
 
 # ======================
