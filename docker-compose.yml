@@ -47,7 +47,7 @@ services:
       DB_PASSWORD: urfu_password
       DB_PORT: 5432
       DEBUG: "True"
-      ALLOWED_HOSTS: "localhost,127.0.0.1,django,155.212.144.126:8000"
+      ALLOWED_HOSTS: "localhost,127.0.0.1,django,155.212.144.126"
     depends_on:
       db_django:
         condition: service_healthy
