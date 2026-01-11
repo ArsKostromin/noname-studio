@@ -69,7 +69,7 @@ services:
       DB_USER: ml_user
       DB_PASSWORD: ml_password
       DB_PORT: 5432
-      HF_API_KEY: REMOVED
+      HF_API_KEY: 
     depends_on:
       db_ml:
         condition: service_healthy
