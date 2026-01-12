@@ -55,3 +55,10 @@ class ChatsListResponse(BaseModel):
 class DeleteChatResponse(BaseModel):
     message: str
     deleted_chat_id: str
+
+
+# ======================
+# Модели для редактирования сообщений
+# ======================
+class EditMessageRequest(BaseModel):
+    new_text: str  # Новый текст сообщения пользователя

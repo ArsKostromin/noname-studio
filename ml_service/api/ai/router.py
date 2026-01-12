@@ -23,6 +23,7 @@ from api.ai.schemas import (
     ChatItem,
     ChatsListResponse,
     DeleteChatResponse,
+    EditMessageRequest,
 )
 
 router = APIRouter(prefix="/api/ai")
@@ -83,6 +84,33 @@ def build_student_context(features: dict, ml_results: dict) -> str:
             parts.append(f"По теме {topic} модель советует повторить материал.")
 
     return " ".join(parts)
+
+
+async def get_chat_history_before_message(
+    db: AsyncSession,
+    chat_id: uuid.UUID,
+    message_id: uuid.UUID,
+) -> list[ChatMessage]:
+    """Получить историю чата до указанного сообщения (для контекста)"""
+    # Сначала получаем время создания редактируемого сообщения
+    msg_result = await db.execute(
+        select(ChatMessage.created_at)
+        .where(ChatMessage.id == message_id)
+    )
+    msg_time = msg_result.scalar_one_or_none()
+    
+    if not msg_time:
+        return []
+    
+    # Получаем все сообщения до этого времени
+    result = await db.execute(
+        select(ChatMessage)
+        .where(ChatMessage.chat_id == chat_id)
+        .where(ChatMessage.id != message_id)
+        .where(ChatMessage.created_at < msg_time)
+        .order_by(ChatMessage.created_at.asc())
+    )
+    return result.scalars().all()
 
 
 # ======================
@@ -343,3 +371,146 @@ async def get_chat_history(
             )
 
     return ChatHistoryResponse(messages=messages)
+
+
+@router.patch("/messages/{message_id}")
+async def edit_message(
+    message_id: str,
+    payload: EditMessageRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncSession = Depends(get_db),
+):
+    """Редактировать сообщение пользователя и получить новый ответ от AI"""
+    access_token = credentials.credentials
+    
+    try:
+        external_user_id = get_user_id_from_token(access_token)
+        msg_uuid = uuid.UUID(message_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Неверный формат данных: {e}")
+    
+    # Находим сообщение
+    msg_result = await db.execute(
+        select(ChatMessage)
+        .where(ChatMessage.id == msg_uuid)
+        .where(ChatMessage.external_user_id == external_user_id)
+    )
+    chat_message = msg_result.scalar_one_or_none()
+    if not chat_message:
+        raise HTTPException(status_code=404, detail="Сообщение не найдено")
+    
+    # Проверяем, что чат принадлежит пользователю
+    chat_result = await db.execute(
+        select(Chat)
+        .where(Chat.id == chat_message.chat_id)
+        .where(Chat.external_user_id == external_user_id)
+    )
+    chat = chat_result.scalar_one_or_none()
+    if not chat:
+        raise HTTPException(status_code=404, detail="Чат не найден")
+    
+    # Получаем историю чата до этого сообщения для контекста
+    history_messages = await get_chat_history_before_message(
+        db, chat_message.chat_id, msg_uuid
+    )
+    
+    # Обновляем текст сообщения пользователя
+    chat_message.user_message = payload.new_text
+    # Очищаем старый ответ AI
+    chat_message.ai_response = ""
+    
+    # Сохраняем изменения
+    await db.commit()
+    await db.refresh(chat_message)
+    
+    # Получаем фичи студента
+    features = await collect_student_features(access_token)
+    ml_results = predict_topic_needs(features)
+    student_context = build_student_context(features, ml_results)
+    
+    # Строим контекст из истории чата
+    history_context = ""
+    if history_messages:
+        history_parts = []
+        for hist_msg in history_messages:
+            if hist_msg.user_message:
+                history_parts.append(f"Пользователь: {hist_msg.user_message}")
+            if hist_msg.ai_response:
+                history_parts.append(f"Ассистент: {hist_msg.ai_response}")
+        history_context = "\n".join(history_parts)
+    
+    # Формируем промпт с учетом истории
+    if history_context:
+        prompt = f"""
+Информация о студенте:
+{student_context}
+
+Предыдущая переписка:
+{history_context}
+
+Вопрос студента (отредактированный):
+"{payload.new_text}"
+
+Напиши один совет (30-50 слов) для этого студента на русском языке.
+Совет должен быть конкретным и мотивирующим.
+Если данных по другим предметам нет, опирайся только на то, что известно.
+"""
+    else:
+        prompt = f"""
+Информация о студенте:
+{student_context}
+
+Вопрос студента:
+"{payload.new_text}"
+
+Напиши один совет (30-50 слов) для этого студента на русском языке.
+Совет должен быть конкретным и мотивирующим.
+Если данных по другим предметам нет, опирайся только на то, что известно (например, {student_context}).
+"""
+    
+    # Логируем запрос
+    print("\n" + "="*50)
+    print("✏️ [EDIT] CONTEXT & PROMPT:")
+    print(f"Context: {student_context}")
+    if history_context:
+        print(f"History: {history_context[:200]}...")
+    print("-" * 20)
+    print(f"Edited Msg: {payload.new_text}")
+    print("="*50 + "\n")
+    
+    # Собираем полный ответ для сохранения в БД
+    full_response = ""
+    
+    async def stream_generator():
+        nonlocal full_response
+        try:
+            async for chunk in hf_client.ask_stream(prompt):
+                full_response += chunk
+                # Экранируем специальные символы для SSE
+                escaped_chunk = chunk.replace("\n", "\\n").replace("\r", "\\r")
+                yield f"data: {escaped_chunk}\n\n"
+            
+            # Обновляем ответ AI в БД
+            if full_response:
+                try:
+                    chat_message.ai_response = full_response
+                    await db.commit()
+                except Exception as e:
+                    print(f"Error updating chat message in DB: {e}")
+                    await db.rollback()
+            
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            print(f"Error in stream generator: {e}")
+            yield f"data: Произошла ошибка при получении ответа.\n\n"
+            yield "data: [DONE]\n\n"
+    
+    return StreamingResponse(
+        stream_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        }
+    )
