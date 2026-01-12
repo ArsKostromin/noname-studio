@@ -25,6 +25,8 @@ from api.ai.schemas import (
     DeleteChatResponse,
     EditMessageRequest,
 )
+from fastapi import Response
+
 
 router = APIRouter(prefix="/api/ai")
 hf_client = HFClient()
@@ -514,3 +516,7 @@ async def edit_message(
             "X-Accel-Buffering": "no",
         }
     )
+
+@router.options("/messages/{message_id}")
+async def options_edit_message(message_id: str):
+    return Response(status_code=200)
