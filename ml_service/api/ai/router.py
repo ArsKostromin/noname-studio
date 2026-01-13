@@ -5,7 +5,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from services.hf_gpt import HFClient
 from services.features import collect_student_features
 from services.ml_model import predict_topic_needs
@@ -415,6 +415,22 @@ async def edit_message(
     history_messages = await get_chat_history_before_message(
         db, chat_message.chat_id, msg_uuid
     )
+    
+    # Сохраняем время создания редактируемого сообщения
+    edit_message_time = chat_message.created_at
+    
+    # Удаляем все сообщения после редактируемого (как в ChatGPT)
+    # Удаляем сообщения, которые были созданы после редактируемого
+    deleted_result = await db.execute(
+        delete(ChatMessage)
+        .where(ChatMessage.chat_id == chat_message.chat_id)
+        .where(ChatMessage.created_at > edit_message_time)
+        .where(ChatMessage.external_user_id == external_user_id)  # Безопасность: только свои сообщения
+    )
+    
+    # Логируем количество удаленных сообщений
+    deleted_count = deleted_result.rowcount if hasattr(deleted_result, 'rowcount') else 0
+    print(f"✏️ [EDIT] Удалено сообщений после редактируемого: {deleted_count}")
     
     # Обновляем текст сообщения пользователя
     chat_message.user_message = payload.new_text
