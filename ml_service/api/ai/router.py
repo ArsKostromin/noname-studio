@@ -495,9 +495,10 @@ async def edit_message(
     
     # Собираем полный ответ для сохранения в БД
     full_response = ""
+    message_id_to_update = chat_message.id  # Сохраняем UUID напрямую
     
     async def stream_generator():
-        nonlocal full_response
+        nonlocal full_response, message_id_to_update
         try:
             async for chunk in hf_client.ask_stream(prompt):
                 full_response += chunk
@@ -505,15 +506,42 @@ async def edit_message(
                 yield chunk
             
             # Обновляем ответ AI в БД после завершения стриминга
-            if full_response:
+            print(f"🔍 [EDIT] Стриминг завершен, full_response длина: {len(full_response)}")
+            
+            if full_response and full_response.strip():
                 try:
-                    chat_message.ai_response = full_response
-                    await db.commit()
+                    # Перезагружаем сообщение из БД, чтобы убедиться, что оно привязано к сессии
+                    print(f"🔍 [EDIT] Ищем сообщение с ID: {message_id_to_update}")
+                    msg_result = await db.execute(
+                        select(ChatMessage)
+                        .where(ChatMessage.id == message_id_to_update)
+                    )
+                    msg_to_update = msg_result.scalar_one_or_none()
+                    
+                    if msg_to_update:
+                        print(f"✅ [EDIT] Сообщение найдено, обновляем ai_response")
+                        msg_to_update.ai_response = full_response.strip()
+                        await db.flush()  # Сначала flush для проверки
+                        await db.commit()  # Затем commit для сохранения
+                        await db.refresh(msg_to_update)  # Обновляем объект из БД
+                        print(f"✅ [EDIT] Ответ AI сохранен в БД: {len(full_response)} символов")
+                        print(f"✅ [EDIT] Проверка: ai_response = '{msg_to_update.ai_response[:50]}...'")
+                    else:
+                        print(f"❌ [EDIT] Сообщение {message_id_to_update} не найдено для обновления")
                 except Exception as e:
-                    print(f"Error updating chat message in DB: {e}")
-                    await db.rollback()
+                    print(f"❌ [EDIT] Error updating chat message in DB: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    try:
+                        await db.rollback()
+                    except:
+                        pass
+            else:
+                print(f"⚠️ [EDIT] Пустой ответ от AI (длина: {len(full_response)}), не сохраняем в БД")
         except Exception as e:
-            print(f"Error in stream generator: {e}")
+            print(f"❌ [EDIT] Error in stream generator: {e}")
+            import traceback
+            traceback.print_exc()
             yield f"Произошла ошибка при получении ответа.\n"
     
     return StreamingResponse(
