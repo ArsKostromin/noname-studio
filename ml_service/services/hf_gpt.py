@@ -2,6 +2,7 @@
 import httpx
 import re
 import json
+import time
 from typing import AsyncGenerator
 from config import settings
 
@@ -14,6 +15,12 @@ class HFClient:
             "Authorization": f"Bearer {settings.HF_API_KEY}",
             "Content-Type": "application/json",
         }
+    
+    def _should_use_fast_model(self) -> bool:
+        """Определяет, нужно ли использовать более быструю модель для стриминга"""
+        # GLM-4.7 может быть медленным из-за reasoning
+        # Можно переключиться на более быструю модель для стриминга
+        return False  # Пока оставляем GLM-4.7
 
     async def ask(self, prompt: str) -> str:
         payload = {
@@ -106,7 +113,7 @@ class HFClient:
         return candidate.strip()
 
     async def ask_stream(self, prompt: str) -> AsyncGenerator[str, None]:
-        """Стриминг ответа от HuggingFace с постепенной отдачей по предложениям"""
+        """Стриминг ответа от HuggingFace с постепенной отдачей"""
         payload = {
             "model": self.model,
             "messages": [
@@ -117,12 +124,20 @@ class HFClient:
                 )},
                 {"role": "user", "content": prompt},
             ],
-            "max_tokens": 2048,
-            "temperature": 0.6,
+            "max_tokens": 1024,  # Уменьшили для ускорения
+            "temperature": 0.7,
             "stream": True,
+            # Параметры для ускорения стриминга
+            "stream_options": {
+                "include_usage": False,
+            },
         }
 
         full_response = ""
+        chunk_count = 0
+        first_content_received = False
+        start_time = time.time()
+        first_chunk_time = None
 
         async with httpx.AsyncClient(timeout=120) as client:
             try:
@@ -148,15 +163,30 @@ class HFClient:
                                 choices = data_json.get("choices", [])
                                 if choices:
                                     delta = choices[0].get("delta", {})
+                                    
+                                    # Обрабатываем reasoning_content (для отладки, но не отправляем)
+                                    reasoning = delta.get("reasoning_content", "")
+                                    if reasoning and not first_content_received:
+                                        elapsed = time.time() - start_time
+                                        print(f"💭 [REASONING @ {elapsed:.2f}s] {reasoning[:50]}...")
+                                    
+                                    # Обрабатываем content - это то, что отправляем пользователю
                                     content = delta.get("content", "")
                                     if content:
+                                        if not first_content_received:
+                                            first_chunk_time = time.time() - start_time
+                                            print(f"✅ [FIRST CHUNK @ {first_chunk_time:.2f}s] Получен: '{content[:50]}...'")
+                                            first_content_received = True
+                                        
                                         full_response += content
-                                        # Отправляем сразу для ускорения первого чанка
+                                        chunk_count += 1
+                                        # Отправляем сразу каждый чанк без задержек
                                         yield content
+                                        
                             except json.JSONDecodeError as e:
                                 err_msg = f"Ошибка декодирования JSON: {e}"
-                                print(err_msg)
-                                yield err_msg
+                                print(f"❌ {err_msg}, line: {line[:100]}")
+                                # Не отправляем ошибку пользователю, только логируем
                         elif line.startswith(":"):
                             continue
 
@@ -165,7 +195,12 @@ class HFClient:
                 print(err_msg)
                 yield err_msg
 
-        print("\n" + "="*50)
-        print("🤖 [OUTPUT] HF STREAMED RESPONSE:")
+        total_time = time.time() - start_time
+        print(f"\n{'='*50}")
+        print(f"🤖 [OUTPUT] HF STREAMED RESPONSE:")
+        print(f"Время до первого чанка: {first_chunk_time:.2f}s" if first_chunk_time else "Первый чанк не получен")
+        print(f"Всего чанков: {chunk_count}")
+        print(f"Общее время: {total_time:.2f}s")
+        print(f"Полный ответ ({len(full_response)} символов):")
         print(full_response)
-        print("="*50 + "\n")
+        print(f"{'='*50}\n")
