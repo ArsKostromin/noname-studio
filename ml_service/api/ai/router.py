@@ -225,14 +225,22 @@ async def message(
 ):
     access_token = credentials.credentials
     
+    print(f"\n{'='*50}")
+    print(f"📨 [MESSAGE] POST /api/ai/message - НОВЫЙ ЗАПРОС")
+    print(f"{'='*50}")
+    
     # Получаем user_id из токена
     try:
         external_user_id = get_user_id_from_token(access_token)
         chat_id = uuid.UUID(payload.chat_id)
+        print(f"✅ [MESSAGE] User ID из токена: {external_user_id}")
+        print(f"✅ [MESSAGE] Chat ID из запроса: {chat_id}")
     except ValueError as e:
+        print(f"❌ [MESSAGE] Ошибка парсинга данных: {e}")
         raise HTTPException(status_code=400, detail=f"Неверный формат данных: {e}")
     
     # Проверяем, что чат существует и принадлежит пользователю
+    print(f"🔍 [MESSAGE] Проверяем существование чата...")
     chat_result = await db.execute(
         select(Chat)
         .where(Chat.id == chat_id)
@@ -240,7 +248,9 @@ async def message(
     )
     chat = chat_result.scalar_one_or_none()
     if not chat:
+        print(f"❌ [MESSAGE] Чат не найден или не принадлежит пользователю")
         raise HTTPException(status_code=404, detail="Чат не найден")
+    print(f"✅ [MESSAGE] Чат найден: {chat.title}")
     
     features = await collect_student_features(access_token)
     ml_results = predict_topic_needs(features)
@@ -268,31 +278,62 @@ async def message(
     
     # Собираем полный ответ для сохранения в БД
     full_response = ""
+    chunk_count = 0
+    
+    print(f"📨 [MESSAGE] Начало обработки запроса")
+    print(f"📨 [MESSAGE] Chat ID: {chat_id}")
+    print(f"📨 [MESSAGE] User message: {payload.message[:100]}...")
     
     async def stream_generator():
-        nonlocal full_response
+        nonlocal full_response, chunk_count
         try:
+            print(f"🔄 [MESSAGE] Начало стриминга от HF")
             async for chunk in hf_client.ask_stream(prompt):
-                full_response += chunk
-                # Отправляем Markdown напрямую без оборачивания в data:
-                yield chunk
+                if chunk:
+                    full_response += chunk
+                    chunk_count += 1
+                    print(f"📦 [MESSAGE] Получен chunk #{chunk_count}, длина: {len(chunk)}, всего: {len(full_response)} символов")
+                    # Отправляем Markdown напрямую без оборачивания в data:
+                    yield chunk
+                else:
+                    print(f"⚠️ [MESSAGE] Получен пустой chunk")
+            
+            print(f"✅ [MESSAGE] Стриминг завершен")
+            print(f"📊 [MESSAGE] Всего чанков: {chunk_count}")
+            print(f"📊 [MESSAGE] Полная длина ответа: {len(full_response)} символов")
+            print(f"📊 [MESSAGE] Ответ (первые 200 символов): {full_response[:200]}...")
             
             # Сохраняем в БД после завершения стриминга
-            if full_response:
+            if full_response and full_response.strip():
                 try:
+                    print(f"💾 [MESSAGE] Сохраняем сообщение в БД...")
                     chat_message = ChatMessage(
                         chat_id=chat_id,
                         external_user_id=external_user_id,
                         user_message=payload.message,
-                        ai_response=full_response,
+                        ai_response=full_response.strip(),
                     )
                     db.add(chat_message)
+                    await db.flush()
                     await db.commit()
+                    await db.refresh(chat_message)
+                    print(f"✅ [MESSAGE] Сообщение успешно сохранено в БД")
+                    print(f"✅ [MESSAGE] ID сообщения: {chat_message.id}")
+                    print(f"✅ [MESSAGE] Проверка ai_response: '{chat_message.ai_response[:100]}...'")
                 except Exception as e:
-                    print(f"Error saving chat message to DB: {e}")
-                    await db.rollback()
+                    print(f"❌ [MESSAGE] Ошибка сохранения в БД: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    try:
+                        await db.rollback()
+                    except:
+                        pass
+            else:
+                print(f"⚠️ [MESSAGE] Пустой ответ от AI (длина: {len(full_response)}), не сохраняем в БД")
         except Exception as e:
-            print(f"Error in stream generator: {e}")
+            print(f"❌ [MESSAGE] Ошибка в stream generator: {e}")
+            import traceback
+            traceback.print_exc()
             yield f"Произошла ошибка при получении ответа.\n"
         
     return StreamingResponse(

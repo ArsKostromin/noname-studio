@@ -90,6 +90,11 @@ class HFClient:
         first_chunk_time = None
         full_response = ""
         chunk_count = 0
+        line_count = 0
+
+        print(f"🚀 [HF_STREAM] Начало запроса к HuggingFace")
+        print(f"🚀 [HF_STREAM] Model: {self.model}")
+        print(f"🚀 [HF_STREAM] URL: {self.api_url}")
 
         async with httpx.AsyncClient(timeout=None) as client:
             try:
@@ -97,67 +102,101 @@ class HFClient:
                     "POST", self.api_url, headers=self.headers, json=payload
                 ) as response:
 
+                    print(f"📡 [HF_STREAM] HTTP Status: {response.status_code}")
+
                     if response.status_code != 200:
                         err = await response.aread()
                         msg = f"HF STREAM ERROR {response.status_code}: {err.decode()}"
-                        print(msg)
+                        print(f"❌ [HF_STREAM] {msg}")
                         yield "Ошибка генерации ответа."
                         return
 
+                    print(f"📥 [HF_STREAM] Начинаем чтение строк...")
                     async for line in response.aiter_lines():
+                        line_count += 1
+                        
                         if not line:
                             continue
 
-                        # HF шлёт SSE:  data: {...}
-                        if not line.startswith("data:"):
+                        # Логируем первые несколько строк для отладки
+                        if line_count <= 5:
+                            print(f"📄 [HF_STREAM] Line #{line_count}: {line[:100]}...")
+
+                        # HF шлёт SSE:  data: {...} или data: {...}
+                        # Проверяем оба варианта: "data:" и "data: "
+                        if line.startswith("data: "):
+                            data_str = line[6:].strip()  # Убираем "data: " и пробелы
+                        elif line.startswith("data:"):
+                            data_str = line[5:].strip()  # Убираем "data:" и пробелы
+                        else:
+                            if line_count <= 10:
+                                print(f"⏭️ [HF_STREAM] Пропуск строки (не начинается с 'data:'): {line[:50]}...")
                             continue
 
-                        data_str = line[5:].strip()
-
                         if data_str == "[DONE]":
+                            print(f"🏁 [HF_STREAM] Получен сигнал [DONE]")
                             break
 
                         try:
                             data_json = json.loads(data_str)
-                        except json.JSONDecodeError:
+                        except json.JSONDecodeError as e:
+                            if line_count <= 10:
+                                print(f"⚠️ [HF_STREAM] Ошибка парсинга JSON: {e}, data_str: {data_str[:100]}")
                             continue
 
                         choices = data_json.get("choices", [])
                         if not choices:
+                            if line_count <= 10:
+                                print(f"⚠️ [HF_STREAM] Нет choices в ответе: {data_json}")
                             continue
 
                         delta = choices[0].get("delta", {})
 
                         # ❗ Берём ТОЛЬКО content, reasoning выкидываем нахер
                         content = delta.get("content", "")
+                        reasoning = delta.get("reasoning_content", "")
+
+                        if reasoning:
+                            if first_chunk_time is None:
+                                elapsed = time.time() - start_time
+                                print(f"💭 [HF_STREAM] Получен reasoning @ {elapsed:.2f}s: {reasoning[:50]}...")
 
                         if content:
                             if first_chunk_time is None:
                                 first_chunk_time = time.time() - start_time
-                                print(
-                                    f"✅ FIRST TOKEN @ {first_chunk_time:.2f}s"
-                                )
+                                print(f"✅ [HF_STREAM] FIRST CONTENT TOKEN @ {first_chunk_time:.2f}s: '{content[:50]}...'")
 
                             full_response += content
                             chunk_count += 1
+
+                            # Логируем первые несколько чанков
+                            if chunk_count <= 5:
+                                print(f"📦 [HF_STREAM] Chunk #{chunk_count}: '{content[:50]}...' (всего {len(full_response)} символов)")
 
                             # 🔥 ВОТ ЭТО УЛЕТАЕТ НА ФРОНТ
                             yield content
 
             except Exception as e:
-                print(f"HF STREAM EXCEPTION: {e}")
+                print(f"❌ [HF_STREAM] EXCEPTION: {e}")
+                import traceback
+                traceback.print_exc()
                 yield "Ошибка соединения с моделью."
 
         total_time = time.time() - start_time
         print("\n" + "=" * 50)
-        print("🤖 HF STREAM FINISHED")
+        print("🤖 [HF_STREAM] STREAM FINISHED")
+        print(f"📊 [HF_STREAM] Всего строк обработано: {line_count}")
         print(
-            f"First chunk: {first_chunk_time:.2f}s"
+            f"⏱️ [HF_STREAM] Первый чанк: {first_chunk_time:.2f}s"
             if first_chunk_time
-            else "First chunk: not received"
+            else "⏱️ [HF_STREAM] Первый чанк: не получен"
         )
-        print(f"Chunks: {chunk_count}")
-        print(f"Total time: {total_time:.2f}s")
-        print("Full response:")
-        print(full_response)
+        print(f"📦 [HF_STREAM] Всего чанков: {chunk_count}")
+        print(f"⏱️ [HF_STREAM] Общее время: {total_time:.2f}s")
+        print(f"📝 [HF_STREAM] Длина ответа: {len(full_response)} символов")
+        if full_response:
+            print(f"📄 [HF_STREAM] Полный ответ:")
+            print(full_response[:500] + ("..." if len(full_response) > 500 else ""))
+        else:
+            print(f"⚠️ [HF_STREAM] ВНИМАНИЕ: Пустой ответ!")
         print("=" * 50 + "\n")
