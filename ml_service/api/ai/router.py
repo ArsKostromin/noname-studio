@@ -274,10 +274,10 @@ async def message(
         try:
             async for chunk in hf_client.ask_stream(prompt):
                 full_response += chunk
-                # Экранируем специальные символы для SSE
-                escaped_chunk = chunk.replace("\n", "\\n").replace("\r", "\\r")
-                yield f"data: {escaped_chunk}\n\n"
+                # Отправляем Markdown напрямую без оборачивания в data:
+                yield chunk
             
+            # Сохраняем в БД после завершения стриминга
             if full_response:
                 try:
                     chat_message = ChatMessage(
@@ -291,16 +291,13 @@ async def message(
                 except Exception as e:
                     print(f"Error saving chat message to DB: {e}")
                     await db.rollback()
-            
-            yield "data: [DONE]\n\n"
         except Exception as e:
             print(f"Error in stream generator: {e}")
-            yield f"data: Произошла ошибка при получении ответа.\n\n"
-            yield "data: [DONE]\n\n"
+            yield f"Произошла ошибка при получении ответа.\n"
         
     return StreamingResponse(
         stream_generator(),
-        media_type="text/event-stream",
+        media_type="text/markdown; charset=utf-8",
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
@@ -504,11 +501,10 @@ async def edit_message(
         try:
             async for chunk in hf_client.ask_stream(prompt):
                 full_response += chunk
-                # Экранируем специальные символы для SSE
-                escaped_chunk = chunk.replace("\n", "\\n").replace("\r", "\\r")
-                yield f"data: {escaped_chunk}\n\n"
+                # Отправляем Markdown напрямую без оборачивания в data:
+                yield chunk
             
-            # Обновляем ответ AI в БД
+            # Обновляем ответ AI в БД после завершения стриминга
             if full_response:
                 try:
                     chat_message.ai_response = full_response
@@ -516,16 +512,13 @@ async def edit_message(
                 except Exception as e:
                     print(f"Error updating chat message in DB: {e}")
                     await db.rollback()
-            
-            yield "data: [DONE]\n\n"
         except Exception as e:
             print(f"Error in stream generator: {e}")
-            yield f"data: Произошла ошибка при получении ответа.\n\n"
-            yield "data: [DONE]\n\n"
+            yield f"Произошла ошибка при получении ответа.\n"
     
     return StreamingResponse(
         stream_generator(),
-        media_type="text/event-stream",
+        media_type="text/markdown; charset=utf-8",
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",

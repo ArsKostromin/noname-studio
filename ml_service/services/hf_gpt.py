@@ -123,7 +123,6 @@ class HFClient:
         }
 
         full_response = ""
-        buffer = ""
 
         async with httpx.AsyncClient(timeout=120) as client:
             try:
@@ -132,8 +131,7 @@ class HFClient:
                         error_text = await response.aread()
                         msg = f"HF ERROR {response.status_code}: {error_text.decode()}"
                         print(msg)
-                        yield f"{msg}\n"
-                        yield "[DONE]\n"
+                        yield msg
                         return
 
                     async for line in response.aiter_lines():
@@ -152,36 +150,20 @@ class HFClient:
                                     delta = choices[0].get("delta", {})
                                     content = delta.get("content", "")
                                     if content:
-                                        buffer += content
-                                        # разбиваем на предложения
-                                        while True:
-                                            # ищем точку/воскл/вопрос
-                                            match = re.search(r"([.!?]+)\s", buffer)
-                                            if not match:
-                                                break
-                                            end_idx = match.end()
-                                            chunk = buffer[:end_idx]
-                                            buffer = buffer[end_idx:]
-                                            full_response += chunk
-                                            yield chunk
+                                        full_response += content
+                                        # Отправляем сразу для ускорения первого чанка
+                                        yield content
                             except json.JSONDecodeError as e:
                                 err_msg = f"Ошибка декодирования JSON: {e}"
                                 print(err_msg)
-                                yield f"{err_msg}\n"
+                                yield err_msg
                         elif line.startswith(":"):
                             continue
 
             except Exception as e:
                 err_msg = f"Ошибка стриминга: {e}"
                 print(err_msg)
-                yield f"{err_msg}\n"
-
-        # остаток
-        if buffer:
-            full_response += buffer
-            yield buffer
-
-        yield "[DONE]\n"
+                yield err_msg
 
         print("\n" + "="*50)
         print("🤖 [OUTPUT] HF STREAMED RESPONSE:")
